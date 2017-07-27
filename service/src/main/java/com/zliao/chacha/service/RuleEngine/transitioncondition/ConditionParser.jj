@@ -1,0 +1,264 @@
+options{
+    IGNORE_CASE=true ;
+    UNICODE_INPUT = true;
+    STATIC=false;
+}
+
+PARSER_BEGIN(ConditionParser)
+package com.zliao.chacha.service.RuleEngine.transitioncondition;
+import java.io.StringReader;
+import java.util.ArrayList; 
+import java.util.List;
+import com.zliao.chacha.service.RuleEngine.tools.Util;
+public class ConditionParser {
+    public ConditionParser(String s){
+    	this((new StringReader(s)));
+    }
+
+}
+
+
+PARSER_END(ConditionParser)
+
+SKIP :                              
+{
+      " "
+    | "\t"
+    | "\r"
+    | "\n"
+
+}
+
+TOKEN: /*RESERVED TOKENS FOR UQL */
+{
+      <AND: "and" | "&&">
+   |  <OR:  "or" | "||">
+   |  <NOT: "not" | "!">
+   |  <LPAREN: "(">
+   |  <RPAREN: ")">
+   |  <TRUE: "true">
+   |  <FALSE: "false">
+   |  <EQUALS: "=">
+   |  <NOTEQUAL: "<>" | "!=">
+   |  <STARTSWITH: "^=">
+   |  <ENDSWITH: "$=">
+   |  <CONTAINS: "*=">
+   |  <LIKE: "%=">
+   |  <REGEX: "~=">
+}
+
+TOKEN : /* the keywords and comparators - QUOTEDVALUE accounts for escaped quotes as well */
+{
+        < IDENTIFIER : (["A"-"Z","a"-"z"])(["A"-"Z","a"-"z","0"-"9"])* >
+	|   
+	< QUOTED_STRING: 
+	    "\"" 
+    		(
+        		 "\\" ~[]     //any escaped character
+    			|                 //or
+        		~["\"","\\"]  //any character except quote or backslash
+    		)* 
+    	"\""  
+     >
+	|
+	< QUOTED_STRING2: 
+	    "\'" 
+    		(
+        		 "\\" ~[]     //any escaped character
+    			|                 //or
+        		~["\'","\\"]  //any character except quote or backslash
+    		)* 
+    	"\'"  
+     >	 
+
+  	|   < DOUBLE: <DBL> | <INTEGER> >
+	| 	< INTEGER:  ("-")? (<DIGIT> )+ >
+  	|   < DBL: ("-")? (["0"-"9"])+ "." (["0"-"9"])*>
+  	| 	< #DIGIT: ["0" - "9"] >
+  	|   < CLASSNAME : <IDENTIFIER> ("." <IDENTIFIER>)* >
+}
+
+Condition condition() :
+{
+	OrExpression expression=null;
+}
+{ 
+		[expression=orExp()]
+	{
+		return new Condition(expression);
+	}
+} 
+
+OrExpression orExp() :
+{
+    List<BaseExpression> andExps=new ArrayList<BaseExpression>();
+    AndExpression andexpRtn;
+}
+{
+	andexpRtn=andexp()
+	{
+		andExps.add(andexpRtn);
+	}
+	(  	    	  
+	<OR>
+	andexpRtn=andexp()
+	{
+		andExps.add(andexpRtn);
+	}
+	)*
+	{
+		return new OrExpression(andExps);
+	}
+}
+
+AndExpression andexp() :
+{
+    List<BaseExpression> baseExps=new ArrayList<BaseExpression>();
+  	BaseExpression expRtn;
+}
+{
+	expRtn=baseExp()
+	{
+		baseExps.add(expRtn);
+	}
+	(
+		<AND>
+	  	expRtn=baseExp()
+	{
+		baseExps.add(expRtn);
+	}
+	)*
+	{
+		return new AndExpression(baseExps);
+	}
+}
+
+BaseExpression baseExp() :
+{
+
+	BaseExpression expsRtn;
+  	Token id;
+  	Object attr=null;
+  	int opType=0;
+  	String left;
+  	Object right;
+}
+{
+	(id=<CLASSNAME>
+		{
+			//sb.append("attrs.get(\""+id.image+"\")!=null && attrs.get(\""+id.image+"\")");  
+			left=id.image;
+		}
+		|
+		id=<QUOTED_STRING>
+		{
+			left=id.image.substring(1,id.image.length()-1);
+			left=Util.unescapeJavaString(left.toString());
+		}
+		|
+		id=<QUOTED_STRING2>
+		{
+			left=id.image.substring(1,id.image.length()-1);
+			left=Util.unescapeJavaString(left.toString());
+		}	
+	)
+	(
+		<EQUALS>
+		{
+			opType=1;
+		}
+		|
+		<NOTEQUAL>
+		{
+			opType=2; 
+		}
+		|
+		<STARTSWITH>
+		{
+			opType=3;  
+		}
+		|
+		<ENDSWITH>
+		{
+			opType=4;  
+		}
+		|
+		<CONTAINS>
+		{
+			opType=5;  
+		}
+		|
+		<LIKE>
+		{
+			opType=6;  
+		}
+		|
+		<REGEX>
+		{
+			opType=7;  
+		}	 
+	)
+	( id=<QUOTED_STRING>
+		{
+			right=id.image.substring(1,id.image.length()-1);
+			right=Util.unescapeJavaString(right.toString());
+	    }
+	    | id=<QUOTED_STRING2>
+	    {
+			right=id.image.substring(1,id.image.length()-1);
+			right=Util.unescapeJavaString(right.toString());
+	    }
+	    | <TRUE>
+	    {
+			right=true;
+	    }
+	    | <FALSE>
+	    {
+			right=false;
+	    }	    
+	    | <INTEGER>		
+  	    {
+			right=Integer.valueOf(id.image);
+	    }
+	    )
+	    {
+			switch(opType)
+			{
+			case 1:
+	        	expsRtn=new EqualExpression(left, right);
+				break;
+		    case 2:
+		    	expsRtn=new NotEqualExpression(left, right);
+				break;
+			case 3:
+		    	expsRtn=new StartsWithExpression(left, (String)right);
+				break;
+			case 4:
+		    	expsRtn=new EndsWithExpression(left, (String)right);
+				break;	
+			case 5:
+				expsRtn=new ContainsExpression(left, (String)right);
+				break;
+			case 7:
+				expsRtn=new RegexExpression(left, (String)right);
+				break;				
+			default:
+			    throw new RuntimeException("unknown opType: "+opType);			
+			}
+	      	return expsRtn;
+	    }
+	    | 
+	    <LPAREN>
+	    expsRtn=orExp()
+	    <RPAREN>
+	    {
+			return expsRtn;	
+	    }
+	    |
+	    <NOT> <LPAREN>
+	    expsRtn=orExp()
+	    <RPAREN>
+	    {
+	    	return new NotExpression(expsRtn);
+	    }
+}

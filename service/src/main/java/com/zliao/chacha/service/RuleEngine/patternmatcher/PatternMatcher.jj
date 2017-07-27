@@ -1,0 +1,410 @@
+options{
+    IGNORE_CASE=true ;
+    UNICODE_INPUT = true;
+    STATIC=false;
+}
+
+PARSER_BEGIN(PatternMatcher)
+
+package com.zliao.chacha.service.RuleEngine.patternmatcher;
+import java.io.StringReader;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import com.zliao.chacha.service.RuleEngine.tools.Util;
+
+public class PatternMatcher {
+    public PatternMatcher(String s){
+    	this((new StringReader(s)));
+    }
+       
+    public static void main(String args[]){
+        try{
+              String rule="[]*? [type='singer'] []*  [type='song'] []* ->  5 com.easemob.ai.robotapi.nlulib.ruleengine.patternmatcher.TestAction('$1' '$2'  '$3' 'aaa')";
+              PatternMatcher pm = new PatternMatcher(rule);
+              MatchRule mr=pm.matchrule(rule);
+              System.out.println(mr.getScore());
+              ArrayList<MatchToken> tokens=new ArrayList<MatchToken>();
+              {
+                MatchToken token=new MatchToken("\u653e");
+                tokens.add(token);
+              }
+              {
+                HashMap<String,Object> attrs=new HashMap<String,Object>();
+                HashSet<String> types=new HashSet<String>();
+                types.add("singer");
+                types.add("song");
+                attrs.put("type", types);
+                attrs.put("text", "\u5218\u5fb7\u534e");
+                MatchToken token=new MatchToken(attrs);
+                tokens.add(token);
+              }
+              {
+                MatchToken token=new MatchToken("\u6f14\u5531");
+                tokens.add(token);
+              }
+              {
+                MatchToken token=new MatchToken("\u7684");
+                tokens.add(token);
+              }
+              {
+                HashMap<String,Object> attrs=new HashMap<String,Object>();
+                HashSet<String> types=new HashSet<String>();
+                types.add("song");
+                attrs.put("type", types);
+                attrs.put("text", "\u5fd8\u60c5\u6c34");
+                MatchToken token=new MatchToken(attrs);
+                tokens.add(token);
+              }
+              int[] matchIdx=new int[mr.getConditions().size()];
+              boolean match=MatchRule.recurMatch(tokens, mr.getConditions(), 0, 0, matchIdx);
+              System.out.println("match: "+match);
+              for(int idx:matchIdx){
+                System.out.println(idx);
+              }
+              
+              double s=(Double)mr.patternMatch(tokens);
+              System.out.println("matchScore: "+s);       
+        }catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+}
+
+PARSER_END(PatternMatcher)
+
+SKIP :                              
+{
+      " "
+    | "\t"
+    | "\r"
+    | "\n"
+
+}
+
+
+TOKEN: /*RESERVED TOKENS FOR UQL */
+{
+      <AND: "and" | "&&">
+   |  <OR:  "or" | "||">
+   |  <NOT: "not" | "!">   
+   |  <LPAREN: "(">
+   |  <RPAREN: ")">
+   |  <TRUE: "true">
+   |  <FALSE: "false">
+   |  <EQUALS: "=">
+   |  <NOTEQUAL: "<>" | "!=">
+   |  <STARTSWITH: "^=">
+   |  <ENDSWITH: "$=">
+   |  <CONTAINS: "*=">
+   |  <LIKE: "%=">
+   |  <REGEX: "~=">
+   |  <STAR: "*">
+   |  <NOTGREEDY: "?">
+   |  <OUTOFORDER: "%">
+   |  <LBRACKET: "{">
+   |  <RBRACKET: "}">
+   
+   |  <PLUS: "+">
+}
+
+TOKEN : /* the keywords and comparators - QUOTEDVALUE accounts for escaped quotes as well */
+{
+        < IDENTIFIER : (["A"-"Z","a"-"z"])(["A"-"Z","a"-"z","0"-"9"])* >
+	|   < QUOTED_STRING: "\"" (~["\""])* "\"" >
+	|   < QUOTED_STRING2: "'" (~["'"])* "'" >
+	| 	< INTEGER:  ("-")? (<DIGIT> )+ >
+  	|   < DOUBLE: <DBL> | <INTEGER> >
+
+  	|   < DBL: ("-")? (["0"-"9"])+ "." (["0"-"9"])*>
+  	| 	< #DIGIT: ["0" - "9"] >
+  	|   < CLASSNAME : <IDENTIFIER> ("." <IDENTIFIER>)* >
+}
+
+MatchRule matchrule(String originalRule) :
+{
+    ArrayList<MatchCondition> cond=new ArrayList<MatchCondition>();  
+    Token id;   
+    Token idClass;  
+    ArrayList<String> prms;
+}
+{
+	cond=conditions() "->"  (id=<DOUBLE>|id=<INTEGER>) idClass=<CLASSNAME> <LPAREN> prms=params()  <RPAREN> <EOF>
+	{
+		double score=Double.valueOf(id.image);
+		String className=idClass.image;
+		MatchRule rr = null;
+		try{
+			rr=new MatchRule(originalRule, cond, score, className, prms);	 
+		}catch(Exception e){
+			e.printStackTrace();
+		} 
+		return rr;
+	}
+}
+
+ArrayList<String> params() :
+{
+	ArrayList<String> result = new ArrayList<String>(5);
+	Token id;
+}
+{
+		( id=<QUOTED_STRING>
+		{
+			result.add(id.image.substring(1,id.image.length()-1));
+	    }
+	    | id=<QUOTED_STRING2>
+	    {
+			result.add(id.image.substring(1,id.image.length()-1));
+	    }
+	    )*
+	    {
+	    	return result;
+	    }
+
+}
+ 
+ArrayList<MatchCondition> conditions() :
+{
+  	int condIdx=0;
+  	ArrayList<MatchCondition> conds=new ArrayList<MatchCondition>();
+  	MatchCondition cond;
+}
+{
+	(
+		cond=condition()
+		{
+			conds.add(cond);
+			condIdx++;
+		}
+	)*
+	{
+		return conds;
+	}
+}
+
+MatchCondition condition() :
+{
+	String s="";
+  	MatchCondition cond;
+  	Token starMin;
+  	Token starMax;
+}
+{
+    (
+		cond=realCondition()
+		[<STAR>
+		{
+        	cond.setStared(true);
+      	}
+      	]
+		[<NOTGREEDY>
+		{
+			cond.setGreedy(false);
+		}
+		]
+		[<OUTOFORDER>
+		{
+			cond.setOutOfOrder(true);
+		}
+		]
+		[<LBRACKET>
+		starMin=<INTEGER>
+		","
+		starMax=<INTEGER>
+		<RBRACKET>
+		{
+			cond.setStared(true);
+			cond.setStarMin(Integer.valueOf(starMin.image).intValue());
+			cond.setStarMax(Integer.valueOf(starMax.image).intValue());			
+		}
+		]
+    )
+    {
+		return cond;
+    } 
+
+}
+
+MatchCondition realCondition() :
+{
+	OrExpression expression=null;
+}
+{
+  	"["         
+		[expression=orExp()]
+	"]"
+	{
+		return new MatchCondition(expression,true,false,false);
+	}
+}
+
+OrExpression orExp() :
+{
+    List<BaseExpression> andExps=new ArrayList<BaseExpression>();
+    AndExpression andexpRtn;
+}
+{
+	andexpRtn=andexp()
+	{
+		andExps.add(andexpRtn);
+	}
+	(  	    	  
+	<OR>
+	andexpRtn=andexp()
+	{
+		andExps.add(andexpRtn);
+	}
+	)*
+	{
+		return new OrExpression(andExps);
+	}
+}
+
+AndExpression andexp() :
+{
+    List<BaseExpression> baseExps=new ArrayList<BaseExpression>();
+  	BaseExpression expRtn;
+}
+{
+	expRtn=baseExp()
+	{
+		baseExps.add(expRtn);
+	}
+	(
+		<AND>
+	  	expRtn=baseExp()
+	{
+		baseExps.add(expRtn);
+	}
+	)*
+	{
+		return new AndExpression(baseExps);
+	}
+}
+
+BaseExpression baseExp() :
+{
+
+	BaseExpression expsRtn;
+  	Token id;
+  	Object attr=null;
+  	int opType=0;
+  	String left;
+  	Object right;
+}
+{
+	id=<IDENTIFIER>
+	{
+		//sb.append("attrs.get(\""+id.image+"\")!=null && attrs.get(\""+id.image+"\")");  
+		left=id.image;
+	}
+	(
+		<EQUALS>
+		{
+			opType=1;
+		}
+		|
+		<NOTEQUAL>
+		{
+			opType=2; 
+		}
+		|
+		<STARTSWITH>
+		{
+			opType=3;  
+		}
+		|
+		<ENDSWITH>
+		{
+			opType=4;  
+		}
+		|
+		<CONTAINS>
+		{
+			opType=5;  
+		}
+		|
+		<LIKE>
+		{
+			opType=6;  
+		}
+		|
+		<REGEX>
+		{
+			opType=7;  
+		}	 
+	)
+	( id=<QUOTED_STRING>
+		{
+			right=id.image.substring(1,id.image.length()-1);
+			right=Util.unescapeJavaString(right.toString());
+	    }
+	    | id=<QUOTED_STRING2>
+	    {
+			right=id.image.substring(1,id.image.length()-1);
+			right=Util.unescapeJavaString(right.toString());
+	    }
+	    | <TRUE>
+	    {
+			right=true;
+	    }
+	    | <FALSE>
+	    {
+			right=false;
+	    }	    
+	    | <INTEGER>		
+  	    {
+			right=Integer.valueOf(id.image);
+	    }
+		| <DOUBLE>		
+  	    {
+			right=Double.valueOf(id.image);
+	    }
+	    )
+	    {
+			switch(opType)
+			{
+			case 1:
+	        	expsRtn=new EqualExpression(left, right);
+				break;
+		    case 2:
+		    	expsRtn=new NotEqualExpression(left, right);
+				break;
+			case 3:
+		    	expsRtn=new StartsWithExpression(left, (String)right);
+				break;
+			case 4:
+		    	expsRtn=new EndsWithExpression(left, (String)right);
+				break;	
+			case 5:
+				expsRtn=new ContainsExpression(left, (String)right);
+				break;
+			case 7:
+				expsRtn=new RegexExpression(left, (String)right);
+				break;				
+			default:
+			    throw new RuntimeException("unknown opType: "+opType);			
+			}
+	      	return expsRtn;
+	    }
+	    | 
+	    <LPAREN>
+	    expsRtn=orExp()
+	    <RPAREN>
+	    {
+			return expsRtn;	
+	    }
+	    |
+	    <NOT> <LPAREN>
+	    expsRtn=orExp()
+	    <RPAREN>
+	    {
+	    	return new NotExpression(expsRtn);
+	    }	    
+}
+
+
+ 
+
